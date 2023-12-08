@@ -35,6 +35,7 @@ class GameListener:
     def handle_connection(self, connection):
         server = self._find_or_create_server(connection.gid)
         server.handle_connection(connection)
+        #connection.send({'action': 'set_gid', 'gid': connection.gid})
 
     def handle_stop(self):
         with self._lock:

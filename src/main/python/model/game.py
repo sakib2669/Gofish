@@ -1,7 +1,9 @@
 import random
+import threading
+import logging
 from collections import defaultdict
 
-
+logger = logging.getLogger(__name__)
 class Card:
     def __init__(self, rank, suit):
         self.rank = rank
@@ -9,6 +11,12 @@ class Card:
 
     def __repr__(self):
         return f"{self.rank} of {self.suit}"
+    
+    def to_dict(self):
+        return {
+            "rank": self.rank,
+            "suit": self.suit
+        }
 
 
 class Deck:
@@ -45,6 +53,11 @@ class Player:
             if count == 4:
                 self.books += 1
                 self.hand = [card for card in self.hand if card.rank != rank]
+                return {
+                    "action": "book done",
+                    "result": "success",
+                }
+
 
     def has_rank(self, rank):
         return any(card.rank == rank for card in self.hand)
@@ -60,7 +73,9 @@ class GoFishGame:
         self.deck = Deck()
         self.players = [Player(name) for name in player_names]
         self.current_player_index = 0
-        self.deal_cards()
+        self.game_started = False
+        self.lock = threading.Lock()
+        #self.deal_cards()
 
     def deal_cards(self):
         num_initial_cards = 7 if len(self.players) <= 3 else 5
@@ -68,33 +83,61 @@ class GoFishGame:
             for player in self.players:
                 player.draw(self.deck)
 
+    def start_game(self, player_names):
+        with self.lock:
+            if not self.game_started:
+                self.players = [Player(name) for name in player_names]
+                self.deal_cards()
+                self.current_player_index = 0
+                self.game_started = True
+
     def next_player(self):
-        self.current_player_index = (self.current_player_index + 1) % len(self.players)
-        print(f"Next player's turn: {self.players[self.current_player_index].name}")
+        with self.lock:
+            self.current_player_index = (self.current_player_index + 1) % len(self.players)
+            current_player = self.players[self.current_player_index].name
+            print(f"Next player's turn: {current_player}")
+            logger.info(f"Switching to next player: {current_player}")
+            return current_player
 
-    def ask_for_card(self, asking_player, target_player_name, rank):
-        target_player = next((p for p in self.players if p.name == target_player_name), None)
-        if not target_player or target_player == asking_player:
-            return "Invalid target player."
 
-        if target_player.has_rank(rank):
-            cards = target_player.give_all_rank(rank)
-            asking_player.hand.extend(cards)
-            asking_player.check_for_book()
-            return f"{asking_player.name} got {len(cards)} cards of {rank} from {target_player.name}"
-        else:
-            drawn_card = asking_player.draw(self.deck)
-            if drawn_card and drawn_card.rank == rank:
-                return f"Go Fish! Lucky draw! {asking_player.name} got a {rank}."
+    def ask_for_card(self, asking_player_name, target_player_name, rank):
+         with self.lock:
+            asking_player = next((p for p in self.players if p.name == asking_player_name), None)
+            target_player = next((p for p in self.players if p.name == target_player_name), None)
+            logger.info(f"Target Player: {target_player}")
+            if not target_player or target_player == asking_player:
+                return "Invalid target player."
+
+            if target_player.has_rank(rank):
+                cards = target_player.give_all_rank(rank)
+                asking_player.hand.extend(cards)
+                asking_player.check_for_book()
+                card_dicts = [card.to_dict() for card in cards]
+                return {
+                "action": "ask_response",
+                "result": "success",
+                "cardsReceived": True,
+                "message": f"{asking_player.name} got {len(cards)} card(s) of rank {rank} from {target_player.name}.",
+                "newCards": card_dicts
+            }
             else:
-                return "Go Fish! No luck this time."
-        return message
+                # Inform the asking player to "Go Fish" and it's the next player's turn
+                return {
+                "action": "ask_response",
+                "result": "go_fish",
+                "cardsReceived": False,
+                "message": "Go Fish! No cards of that rank. Your turn is over."
+            }
 
     def is_game_over(self):
         return all(player.books >= 1 for player in self.players) or not self.deck.cards
 
     def is_current_player_turn(self, player):
-        return player == self.players[self.current_player_index]
+        check = player == self.players[self.current_player_index].name
+        logger.info(f"Checking turn for {player}. Current player: {check}")
+        logger.info(f"Checking turn for {player}. Current player: {self.players[self.current_player_index].name}")
+        return check
+    
 
     def check_game_end(self):
         # Assuming the game ends when one player collects all cards
